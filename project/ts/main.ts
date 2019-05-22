@@ -1,39 +1,14 @@
-import phina from "phina.js.d.ts/globalized";
+/// <reference path="../node_modules/phina.js.d.ts/globalized/index.d.ts" />
 
-// phina.js をグローバル領域に展開
 phina.globalize();
 
 var ASSETS = {
-	image: {
-		'enemy': './img/enemy.png',
-		'enemy_shot': './img/enemy_shot.png',
-		'ship': './img/ship.png',
-		'ship_shot': './img/ship_shot.png',
-		'shield': './img/shield.png',
-		'explosion_big': './img/explosion_big.png',
-		'speed_line': './img/speed_line.png',
-		'bg_02': './img/bg_02.png',
-	},
-	spritesheet: {
-		"explosion_big": {
-			// フレーム情報
-			"frame": {
-				"width": 32, // 1フレームの画像サイズ（横）
-				"height": 32, // 1フレームの画像サイズ（縦）
-				"cols": 4, // フレーム数（横）
-				"rows": 1, // フレーム数（縦）
-			},
-			// アニメーション情報
-			"animations": {
-				"explosion_big": { // アニメーション名
-					"frames": [0, 1, 2, 3], // フレーム番号範囲
-					"next": "", // 次のアニメーション
-					"frequency": 6, // アニメーション間隔
-				},
-			}
-		},
-	}
+	// image: {
+	// },
+	// spritesheet: {
+	// },
 };
+
 
 class DF {
 	static SC_W = 240;
@@ -67,7 +42,7 @@ class MathHelper {
 		const length = max - min;
 		const v2 = v - min;
 		if (0 <= v2) {
-			return min + (parseInt(v2) % parseInt(length));
+			return min + (Math.floor(v2) % Math.floor(length));
 		}
 		return min + (length + (v2 % length)) % length;
 	}
@@ -131,33 +106,6 @@ assertEq(0.5, MathHelper.progress01(5, 10));
 assertEq(1, MathHelper.progress01(10, 10));
 assertEq(1, MathHelper.progress01(11, 10));
 
-class BulletHelper {
-	static update(scene, bullet) {
-		//const t = MathHelper.tForLerp(bullet.elapsedTime, bullet.endTime);
-		bullet.sprite.rotation = bullet.rotation;
-		//bullet.isActive &= !MathHelper.isLerpEnd(t);
-		bullet.elapsedTime += scene.app.ticker.deltaTime;
-		const v = new Vector2().fromDegree(bullet.rotation, scene.data.config.playerBulletSpeed * scene.app.ticker.deltaTime / 1000.0);
-		bullet.sprite.x += v.x;
-		bullet.sprite.y += v.y;
-	}
-}
-
-class SpeedLineHelper {
-	static update(scene, smoke) {
-		const t = MathHelper.tForLerp(smoke.elapsedTime, smoke.endTime);
-		smoke.sprite.rotation = smoke.rotation;
-		smoke.isActive &= !MathHelper.isLerpEnd(t);
-		smoke.elapsedTime += scene.app.ticker.deltaTime;
-		const v = new Vector2().fromDegree(smoke.rotation, 500 * scene.app.ticker.deltaTime / 1000.0);
-		smoke.sprite.x += v.x;
-		smoke.sprite.y += v.y;
-	}
-}
-
-class PlayerHelper {
-}
-
 class Vector2Helper {
 	static isZero(v: Vector2) {
 		return v.x === 0 && v.y === 0;
@@ -167,6 +115,7 @@ class Vector2Helper {
 		a.y = b.y;
 	}
 }
+
 const StateId = {
 	S1I: 10,
 	S1: 11,
@@ -176,821 +125,456 @@ const StateId = {
 	EXIT: 100,
 }
 
-class Player {
-	constructor() {
-		const sprite = Sprite("ship");
-		sprite.x = 120;
-		sprite.y = DF.SC_H * 3 / 4;
-		sprite.priority = 5;
-
-		this.score = 0;
-		this.sprite = sprite;
-		const collider = RectangleShape();
-		collider.width = 8;
-		collider.height = 8;
-		collider.alpha = 0.0;
-		this.collider = collider;
-
-		this.fireInterval = 50;
-		this.fireTime = 0;
-		this.rotation = Rotation.UP;
-		this.isInSafeArea = true;
-	}
+interface EnterFrameEvent {
+	app: phina.game.GameApp;
+	target: DisplayScene;
 }
 
-class Shield {
-	constructor() {
-		const sprite = Sprite("shield");
-		sprite.priority = 5;
-		this.sprite = sprite;
-		const collider = RectangleShape();
-		collider.width = 8;
-		collider.height = 32;
-		collider.alpha = 0.0;
-		this.collider = collider;
-		this.rotation = Rotation.UP;
-		this.isInSafeArea = true;
-	}
+class GameObjectType {
+	static UNDEF = 0;
+	static PLAYER = 1;
+	static PLAYER_BULLET = 2;
+	static ENEMY = 3;
+	static EFFECT = 4;
 }
 
-class Enemy {
-	constructor(pos, moveData) {
-		const sprite = Sprite("enemy");
-		sprite.x = pos.x;
-		sprite.y = pos.y;
-		sprite.priority = 3;
-		this.startPos = new Vector2(pos.x, pos.y);
-		this.moveWork = new MoveWork(pos, moveData);
-		this.score = 0;
-		this.sprite = sprite;
-		this.fireInterval = 200;
-		this.fireTime = 0;
-		this.stateTime = 0;
-		this.state = 0;
-		this.rotation = Rotation.UP;
-		this.isInSafeArea = true;
-		this.isActive = true;
-	}
+class GameObject {
+	name = '';
+	type = GameObjectType.UNDEF;
+	hasDelete = false;
+	sprite: AsciiSprite = new AsciiSprite();
+	life: Life = new Life();
+	bullet: Bullet | null = null;
+	effect: Effect | null = null;
 }
 
-class EnemyHelper {
-	static update(scene, enemy: Enemy) {
-		MoveWorkHelper.update(scene, enemy.moveWork, scene.app.ticker.deltaTime, enemy);
-	}
-
-	static createEnemy(scene, pos, moveData) {
-		const enemy = new Enemy(pos, moveData);
-		enemy.sprite.addChildTo(scene.layer1);
-		scene.data.enemyArr.push(enemy);
-		return enemy;
-	}
+class Life {
+	hpMax = 1;
+	hp = 1;
 }
 
-class Explosion {
-	constructor(pos) {
-		const sprite = new Sprite("explosion_big");
-		sprite.priority = 1;
-		sprite.x = pos.x;
-		sprite.y = pos.y;
-		this.sprite = sprite;
-		var anim = new FrameAnimation("explosion_big").attachTo(sprite);
-		anim.gotoAndPlay("explosion_big");
-		this.anim = anim;
-		this.isActive = true;
-	}
-}
-
-class ExplosionHelper {
-	static update(scene, explosion: Explosion) {
-		if (explosion.anim.finished) {
-			explosion.isActive = false;
-		}
-	}
-
-	static createExplosion(scene, pos: Vector2) {
-		const pos2 = new Vector2(
-			pos.x + Math.random() * 8 - 4,
-			pos.y + Math.random() * 8 - 4
-		);
-		const explosion = new Explosion(pos2);
-		explosion.sprite.addChildTo(scene.layer1);
-		scene.data.explosionArr.push(explosion);
-		return explosion;
-	}
-}
-
-class WaveWork {
-	waves: any[];
-	blockWorks: BlockWork[] = [];
-	blockIndex: number = 0;
-	waveTime: number = 0;
-	waveIndex: number = 0;
-	blockTime: number = 0;
-	isEnd: boolean = false;
-	constructor(waves) {
-		this.waves = waves;
-		WaveWorkHelper.resetBlock(this);
-	}
-}
-
-class BlockWork {
-	blockTime = 0;
-	blockData: any;
-	enemyIndex = 0;
-	isEnd = false;
-
-	constructor(blockData) {
-		this.blockData = blockData;
-	}
-}
-
-class BlockWorkHelper {
-	static update(scene, waveWork: WaveWork, blockWork: BlockWork) {
-		const blockData = blockWork.blockData;
-		if (waveWork.waveTime < blockData.time) return;
-		if (blockWork.isEnd) return;
-		const enableCount = MathHelper.min(blockData.enemyCount, parseInt(blockWork.blockTime / blockData.delay));
-		const waveData = waveWork.waves[waveWork.waveIndex];
-
-		const pos = new Vector2(blockData.pos.x, blockData.pos.y);
-		pos.x *= waveData.scale.x;
-		pos.y *= waveData.scale.y;
-		pos.x += DF.SC_W / 2;
-		pos.y += DF.SC_H / 2;
-
-		const orderScale = new Vector2(waveData.scale.x, waveData.scale.y);
-		orderScale.x *= blockWork.blockData.scale.x;
-		orderScale.y *= blockWork.blockData.scale.y;
-		for (var i = blockWork.enemyIndex; i < enableCount; i++) {
-			const baseMoveData = moveDataDict[blockData.moveDataName];
-			const moveData = JSON.parse(JSON.stringify(baseMoveData));
-			for (let i = 0; i < moveData.length; i++) {
-				const orderData = moveData[i];
-				switch (orderData.type) {
-					case 'moveTo':
-						orderData.x *= orderScale.x;
-						orderData.y *= orderScale.y;
-						break;
-					case 'rotateTo':
-						const angleVec = Vector2().fromDegree(orderData.angle, 1);
-						angleVec.x *= orderScale.x;
-						angleVec.y *= orderScale.y;
-						orderData.angle = angleVec.toDegree();
-						break;
-				}
-			}
-			EnemyHelper.createEnemy(scene, pos, moveData);
-		}
-		blockWork.enemyIndex = enableCount;
-		if (blockData.enemyCount <= blockWork.enemyIndex) {
-			blockWork.isEnd = true;
-		}
-		blockWork.blockTime += scene.app.ticker.deltaTime;
-	}
-}
-
-class WaveWorkHelper {
-
-	static resetBlock(waveWork: WaveWork) {
-		const wave = waveWork.waves[waveWork.waveIndex];
-		const blocks = wave.blocks;
-		waveWork.blockWorks = [];
-		for (let i = 0; i < blocks.length; i++) {
-			const blockData = blocks[i];
-			const blockWork = new BlockWork(blockData);
-			waveWork.blockWorks.push(blockWork);
-		}
-		waveWork.blockIndex = 0;
-		waveWork.waveTime = 0;
-		waveWork.blockTime = 0;
-	}
-
-	static update(scene, waveWork: WaveWork) {
-		if (waveWork.isEnd) return;
-
-		const blocks = waveWork.blockWorks;
-		for (let i = 0; i < blocks.length; i++) {
-			const blockWork = blocks[i];
-			BlockWorkHelper.update(scene, waveWork, blockWork);
-		}
-		let endBlockCount = 0;
-		for (let i = 0; i < blocks.length; i++) {
-			const blockWork = blocks[i];
-			if (blockWork.isEnd) {
-				endBlockCount++;
-			}
-		}
-		if (blocks.length <= endBlockCount) {
-			const isEnemyZero = scene.data.enemyArr.length <= 0;
-			if (isEnemyZero) {
-				var nextWaveIndex = MathHelper.wrap(waveWork.waveIndex + 1, 0, waveWork.waves.length);
-				waveWork.waveIndex = nextWaveIndex;
-				WaveWorkHelper.resetBlock(waveWork);
-				//waveWork.isEnd = true;
-				return;
-			}
-		}
-
-		waveWork.waveTime += scene.app.ticker.deltaTime;
-	}
-}
-
-class OrderWork {
-	orderData: any;
-	state = 0;
+class Effect {
+	duration = 1000;
 	time = 0;
-	updateFunc: (scene: any, orderWork: OrderWork, enemy: Enemy) => void;
+}
 
-	constructor(orderData) {
-		this.orderData = orderData;
-		this.updateFunc = OrderUpdateFunc[orderData.type];
+class Bullet {
+	vec = 1;
+}
+
+class AsciiSprite {
+	character = ' ';
+	position = 0;
+	priority = 0;
+}
+
+type StateEvent = {
+	app: GameApp,
+	sm: StateMachine,
+};
+type StateFunc = (target: any, evt: StateEvent) => ((target: any, evt: StateEvent) => any) | null;
+
+class StateMachine {
+	time = 0;
+	state: StateFunc = (_1, _2) => null;
+
+	update(target: any, app: GameApp) {
+		var nextState = this.state(target, { app: app, sm: this });
+		if (nextState && this.state !== nextState) {
+			this.state = nextState;
+			this.time = 0;
+		} else {
+			this.time += app.deltaTime;
+		}
 	}
 }
 
-class OrderUpdateFunc {
-	static moveTo(scene, orderWork: OrderWork, enemy: Enemy) {
-		if (orderWork.state === 0) {
-			orderWork.startX = enemy.sprite.x;
-			orderWork.startY = enemy.sprite.y;
+class HogeScene {
+	scene: phina.display.DisplayScene;
+	lines: string[][] = [[], [], []];
+	mainLabel: Label;
+	player: GameObject;
+	goArr: GameObject[] = [];
+	stageLeft = 0;
+	stageRight = 32;
+	isStarted = false;
+	isEnd = false;
+	sm = new StateMachine();
+
+	enemyDataDict: { [index: string]: { character: string, speed: number } } = {
+		'enm_1': {
+			character: '-',
+			speed: 8,
+		},
+		'enm_2': {
+			character: '_',
+			speed: 6,
+		},
+		'enm_3': {
+			character: '^',
+			speed: 10,
+		},
+		'enm_4': {
+			character: '~',
+			speed: 4,
+		},
+	};
+
+	waveDataDict: { [index: string]: { time: number, character: string }[] } = {
+		'wave_1': [
+			{ time: 1000, character: 'enm_1', },
+			{ time: 2000, character: 'enm_2', },
+			{ time: 3000, character: 'enm_3', },
+		],
+		'wave_2': [
+			{ time: 1000, character: 'enm_1', },
+			{ time: 1500, character: 'enm_2', },
+			{ time: 2000, character: 'enm_3', },
+			{ time: 2500, character: 'enm_4', },
+		],
+	};
+
+	questData = {
+		waveArr: [
+			'wave_1',
+			'wave_2',
+		],
+	};
+
+	playerBulletSpeed = 8;
+
+	questWaveIndex = 0;
+	questWaveEnemyIndex = 0;
+	questLoopCount = 0;
+	questTime = 0;
+
+	constructor(pScene: phina.display.DisplayScene) {
+		this.scene = pScene;
+		pScene.backgroundColor = '#000000';
+		{
+			const go = new GameObject();
+			go.name = 'player';
+			go.type = GameObjectType.PLAYER;
+			go.sprite.character = 'p';
+			go.sprite.priority = 1;
+			this.goArr.push(go);
+			this.player = go;
 		}
-		switch (orderWork.state) {
-			case 0:
-			case 1:
-			case 2:
-				const t = MathHelper.tForLerpClapmed(orderWork.time, orderWork.orderData.duration);
-				const endX = enemy.startPos.x + orderWork.orderData.x;
-				const endY = enemy.startPos.y + orderWork.orderData.y;
-				enemy.sprite.x = LerpHelper.linear(orderWork.startX, endX, t);
-				enemy.sprite.y = LerpHelper.linear(orderWork.startY, endY, t);
-				break;
+
+		{
+			var label = new phina.display.Label({
+				text: '',
+				fill: '#00ff00',
+				fontSize: '12',
+				fontFamily: 'monospaced',
+				align: 'left',
+			});
+			label.x = 0;
+			label.y = pScene.gridY.center();
+			label.addChildTo(pScene);
+			this.mainLabel = label;
 		}
+		this.sm.state = this.stateHoge;
+
+		pScene.addEventListener('enterframe', (evt: EnterFrameEvent) => {
+			this.enterframe(evt);
+		});
 	}
 
-	static rotateTo(scene, orderWork: OrderWork, enemy: Enemy) {
-		if (orderWork.state === 0) {
-			orderWork.startAngle = enemy.sprite.rotation;
+	stateHoge(self: HogeScene, evt: StateEvent) {
+		if (1000 <= evt.sm.time) {
+			return self.state2;
 		}
-		switch (orderWork.state) {
-			case 0:
-			case 1:
-			case 2:
-				const t = MathHelper.tForLerpClapmed(orderWork.time, orderWork.orderData.duration);
-				const endAngle = orderWork.orderData.angle;
-				enemy.sprite.rotation = LerpHelper.linear(orderWork.startAngle, endAngle, t);
-				break;
-		}
+		return null;
 	}
 
-	static shot(scene, orderWork: OrderWork, enemy: Enemy) {
-		switch (orderWork.state) {
-			case 0:
-				orderWork.prevTime = 0;
-				break;
-			case 1:
-			case 2:
-				const interval = orderWork.orderData.interval;
-				const hasShot = (interval == 0) ?
-					true :
-					(parseInt(orderWork.prevTime / interval) < parseInt(orderWork.time / interval));
-				orderWork.prevTime = orderWork.time;
-				if (hasShot) {
-					scene.createEnemyBullet(enemy.sprite, enemy.sprite.rotation);
+	state2(self: HogeScene, evt: StateEvent) {
+		if (evt.sm.time === 0) {
+			self.isStarted = true;
+		}
+		var playerIndex = self.goArr.findIndex(go => go.type === GameObjectType.PLAYER);
+		if (playerIndex === -1) {
+			self.isEnd = true;
+			return self.stateGameOver;
+		}
+
+		// リセット.
+		if (evt.app.keyboard.getKeyUp('r')) {
+			return self.stateExit;
+		}
+
+		return null;
+	}
+
+	stateGameOver(self: HogeScene, evt: StateEvent) {
+		if (evt.sm.time === 0) {
+		}
+		if (3000 <= evt.sm.time) {
+			return self.stateExit;
+		}
+		return null;
+	}
+
+	stateExit(self: HogeScene, evt: StateEvent) {
+		if (evt.sm.time === 0) {
+			self.scene.exit();
+		}
+		return null;
+	}
+
+	updateQuest(myScene: HogeScene, app: GameApp) {
+		if (!myScene.isStarted) return;
+		const goArr = myScene.goArr;
+		{
+			const quest = myScene;
+			const waveId = quest.questData.waveArr[quest.questWaveIndex];
+			const enemyArr = quest.waveDataDict[waveId];
+			if (quest.questWaveEnemyIndex < enemyArr.length) {
+				const putData = enemyArr[quest.questWaveEnemyIndex];
+				if (quest.questTime < putData.time) {
+					// skip.
+				} else {
+					const enemyData = quest.enemyDataDict[putData.character];
+
+					{
+						const go = new GameObject();
+						go.name = 'enemy';
+						go.type = GameObjectType.ENEMY;
+						go.sprite.character = enemyData.character;
+						go.sprite.priority = 4;
+						go.sprite.position = this.stageRight;
+						go.bullet = new Bullet();
+						var scale = (1 + quest.questLoopCount * 0.5);
+						go.bullet.vec = -enemyData.speed * scale;
+						this.goArr.push(go);
+					}
+
+					quest.questWaveEnemyIndex += 1;
 				}
-				break;
-		}
-	}
-}
-
-class OrderWorkHelper {
-	static update(scene, orderWork: OrderWork, deltaTime: number, enemy: Enemy) {
-		switch (orderWork.state) {
-			case 0:
-				if (orderWork.orderData.time <= orderWork.time) {
-					orderWork.time = 0;
-					orderWork.updateFunc(scene, orderWork, enemy);
-					orderWork.state = 1;
+			} else {
+				const hasAliveEnemy = 0 <= goArr.findIndex(go => {
+					return go.type === GameObjectType.ENEMY;
+				});
+				if (hasAliveEnemy) {
+					// 残りの敵がいる.
+				} else {
+					// 敵がゼロなので、次に進む.
+					quest.questWaveIndex += 1;
+					quest.questWaveEnemyIndex = 0;
+					if (quest.questData.waveArr.length <= quest.questWaveIndex) {
+						quest.questLoopCount += 1;
+						quest.questWaveIndex = 0;
+					}
 				}
-				break;
-			case 1:
-				orderWork.updateFunc(scene, orderWork, enemy);
-				if (orderWork.orderData.duration <= orderWork.time) {
-					orderWork.state = 2;
-				}
-				break;
-			case 2:
-				orderWork.updateFunc(scene, orderWork, enemy);
-				orderWork.state = 3;
-				return;
-		}
-		orderWork.time += deltaTime;
-	}
-}
+			}
 
-class MoveWork {
-	constructor(pos, moveData) {
-		this.pos = new Vector2(pos.x, pos.y);
-		this.index = 0;
-		this.time = 0;
-		this.state = 0;
-		this.moveData = moveData;
-
-		this.orderWorkArr = [];
-		for (let i = 0; i < moveData.length; i++) {
-			var orderData = moveData[i];
-			var orderWork = new OrderWork(orderData);
-			this.orderWorkArr.push(orderWork);
+			quest.questTime += app.ticker.deltaTime;
 		}
 	}
-}
 
-class MoveWorkHelper {
-	static getPosition(moveWork, curPos) {
-		const moveData = moveWork.moveData;
-		if (MoveWorkHelper.isEnd(moveWork)) return curPos;
-		const curve = moveData[moveWork.index];
-		const t1 = MathHelper.clamp01(moveWork.time / curve.time);
-		const samples = curve.samples;
-		let minSample = samples[0];
-		let maxSample = minSample;
-		for (let i = samples.length - 1; 0 <= i; i--) {
-			const sample = samples[i];
-			if (sample.t <= t1) {
-				minSample = sample;
-				maxSample = samples[Math.min(i + 1, samples.length - 1)];
-				break;
+	static characterCollisionDict = {
+		'p': (1 << 0) | (1 << 1) | (1 << 2),
+		'-': (0 << 0) | (1 << 1) | (0 << 2),
+		'~': (0 << 0) | (1 << 1) | (0 << 2),
+		'_': (0 << 0) | (0 << 1) | (1 << 2),
+		'^': (0 << 1) | (0 << 0) | (1 << 0),
+	}
+
+	static isHit(a: GameObject, b: GameObject) {
+		const apos = a.sprite.position;
+		const bpos = b.sprite.position;
+		const distance = apos < bpos ?
+			bpos - apos :
+			apos - bpos;
+
+		if (1 < distance) return false;
+
+		var aFlag = HogeScene.characterCollisionDict[a.sprite.character];
+		if (!aFlag) {
+			aFlag = (1 << 0) | (1 << 1) | (2 << 1);
+		}
+
+		var bFlag = HogeScene.characterCollisionDict[b.sprite.character];
+		if (!bFlag) {
+			bFlag = (1 << 0) | (1 << 1) | (2 << 1);
+		}
+
+		return (aFlag & bFlag) !== 0;
+	}
+
+	static hit(own: GameObject, other: GameObject) {
+		own.life.hp -= 1;
+		if (own.life.hp < 0) {
+			own.life.hp = 0;
+		}
+	}
+
+	updateHit(goArr: GameObject[], aFilter: (go: GameObject) => boolean, bFilter: (go: GameObject) => boolean) {
+		for (var i = 0; i < goArr.length; i++) {
+			const aGO = goArr[i];
+			if (!aFilter(aGO)) continue;
+			for (var j = 0; j < goArr.length; j++) {
+				const bGO = goArr[j];
+				if (!bFilter(bGO)) continue;
+				if (!HogeScene.isHit(aGO, bGO)) continue;
+				HogeScene.hit(aGO, bGO);
+				HogeScene.hit(bGO, aGO);
 			}
 		}
-		const t2 = MathHelper.progress01(t1 - minSample.t, maxSample.t - minSample.t);
-		//console.log(`t1: ${t1.toFixed(2)}, t2: ${t2.toFixed(2)}`);
-		const pos = Vector2.lerp(minSample, maxSample, t2);
-		pos.add(moveWork.pos);
-		return pos;
 	}
 
-	static evalaute(moveWork, enemy) {
-		if (!enemy.isActive) return;
-		const pos = enemy.sprite;
-		const nextPos = MoveWorkHelper.getPosition(moveWork, enemy);
-		const v = Vector2.sub(nextPos, pos);
-		if (0 < v.lengthSquared()) {
-			enemy.sprite.rotation = v.toDegree();
-		}
-		enemy.sprite.x = nextPos.x;
-		enemy.sprite.y = nextPos.y;
+	updatePlayer(app: GameApp) {
+		const playerIndex = this.goArr.findIndex(go => go.type === GameObjectType.PLAYER);
+		const player = this.goArr[playerIndex];
+		if (!player) return;
 
-		enemy.isActive &= !MoveWorkHelper.isEnd(enemy.moveWork);
+		if (app.keyboard.getKeyDown('right')) {
+			const go = new GameObject();
+			go.name = 'bullet';
+			go.type = GameObjectType.PLAYER_BULLET;
+			go.sprite.character = '-';
+			go.sprite.priority = 2;
+			go.sprite.position = player.sprite.position + 1;
+			go.bullet = new Bullet();
+			go.bullet.vec = this.playerBulletSpeed;
+			this.goArr.push(go);
+		}
+
+		if (app.keyboard.getKeyDown('down')) {
+			const go = new GameObject();
+			go.name = 'bullet';
+			go.type = GameObjectType.PLAYER_BULLET;
+			go.sprite.character = '_';
+			go.sprite.priority = 2;
+			go.sprite.position = player.sprite.position + 1;
+			go.bullet = new Bullet();
+			go.bullet.vec = 4;
+			this.goArr.push(go);
+		}
+
+		if (app.keyboard.getKeyDown('up')) {
+			const go = new GameObject();
+			go.name = 'bullet';
+			go.type = GameObjectType.PLAYER_BULLET;
+			go.sprite.character = '^';
+			go.sprite.priority = 2;
+			go.sprite.position = player.sprite.position + 1;
+			go.bullet = new Bullet();
+			go.bullet.vec = 4;
+			this.goArr.push(go);
+		}
 	}
 
-	static isEnd(moveWork) {
-		const orderWorkArr = moveWork.orderWorkArr;
-		for (let i = 0; i < orderWorkArr.length; i++) {
-			const orderWork = orderWorkArr[i];
-			if (orderWork.state < 2) return false;
-		}
-		return true;
-	}
+	enterframe(evt: EnterFrameEvent) {
+		const app = evt.app;
+		const myScene = this;
 
-	static update(scene, moveWork, deltaTime, enemy) {
-		if (!enemy.isActive) return;
-		if (MoveWorkHelper.isEnd(moveWork)) return;
-		const orderWorkArr = moveWork.orderWorkArr;
-		for (let i = 0; i < orderWorkArr.length; i++) {
-			const orderWork = orderWorkArr[i];
-			OrderWorkHelper.update(scene, orderWork, deltaTime, enemy);
+		myScene.sm.update(myScene, app);
+
+		myScene.updatePlayer(app);
+
+		myScene.updateQuest(myScene, app);
+		const goArr = myScene.goArr;
+
+		// Bullet.
+		goArr.forEach(go => {
+			const bullet = go.bullet;
+			if (!bullet) return;
+			const vec = bullet.vec;
+			go.sprite.position += vec * app.ticker.deltaTime / 1000;
+			if (!MathHelper.isInRange(go.sprite.position, myScene.stageLeft, myScene.stageRight)) {
+				go.hasDelete = true;
+			}
+		});
+
+		// Life.
+		goArr.forEach(go => {
+			const life = go.life;
+			if (!life) return;
+			if (0 < life.hp) return;
+
+			{
+				const effect = new GameObject();
+				effect.name = 'effect';
+				effect.type = GameObjectType.EFFECT;
+				effect.sprite.character = '*';
+				effect.sprite.priority = 3;
+				effect.sprite.position = go.sprite.position;
+				effect.effect = new Effect();
+				effect.effect.duration = 500;
+				this.goArr.push(effect);
+			}
+
+			go.hasDelete = true;
+		});
+
+		// Effect.
+		goArr.forEach(go => {
+			const effect = go.effect;
+			if (!effect) return;
+			effect.time += app.ticker.deltaTime;
+			if (effect.time < effect.duration) return;
+			go.hasDelete = true;
+		});
+
+		// 衝突判定.
+		myScene.updateHit(goArr, go => go.type === GameObjectType.PLAYER, go => go.type === GameObjectType.ENEMY);
+		myScene.updateHit(goArr, go => go.type === GameObjectType.PLAYER_BULLET, go => go.type === GameObjectType.ENEMY);
+
+		// 掃除.
+		for (var i = goArr.length - 1; 0 <= i; i--) {
+			const go = goArr[i];
+			if (!go.hasDelete) continue;
+			goArr.splice(i, 1);
 		}
-		moveWork.time += deltaTime;
-		enemy.isActive &= !MoveWorkHelper.isEnd(moveWork);
+
+		// 描画.
+		var sprites: AsciiSprite[] = [];
+		myScene.goArr.forEach((go) => {
+			if (!go.sprite) return;
+			sprites.push(go.sprite);
+		});
+
+		sprites.sort((a, b) => {
+			var cmp = a.priority - b.priority;
+			return cmp;
+		});
+
+		for (let i = 0; i < myScene.lines.length; i++) {
+			var line = myScene.lines[i];
+			for (let j = 0; j < 32; j++) {
+				line[j] = ' ';
+			}
+		}
+
+		sprites.forEach((sprite) => {
+			myScene.lines[0][Math.floor(sprite.position)] = sprite.character;
+		});
+
+		var text = '';
+		for (let i = 0; i < myScene.lines.length; i++) {
+			var line = myScene.lines[i];
+			for (let j = 0; j < 32; j++) {
+				text += line[j];
+			}
+			text += '\n';
+		}
+		text += 'loop: ' + myScene.questLoopCount;
+		myScene.mainLabel.text = text;
 	}
 }
 
-class ObjectArrayHelper {
-	static removeInactive(objArr: any[]) {
-		for (let i = objArr.length - 1; 0 <= i; i--) {
-			const item = objArr[i];
-			if (item.isActive) continue;
-			item.sprite.remove();
-			objArr.splice(i, 1);
-		}
-	}
-}
-
-// MainScene クラスを定義
 phina.define('MainScene', {
 	superClass: 'DisplayScene',
-	init: function (options) {
+	init: function (options: any) {
 		this.superInit(options);
-		// 背景色を指定
-		this.backgroundColor = '#444444';
-
-		{
-			const layer = DisplayElement();
-			layer.addChildTo(this);
-			this.layer0 = layer;
-		}
-
-		{
-			const layer = DisplayElement();
-			layer.addChildTo(this);
-			this.layer1 = layer;
-		}
-
-
-		const data = {
-			smokeArr: [],
-			playerBulletArr: [],
-			enemyBulletArr: [],
-			speedLineArr: [],
-			enemyArr: [],
-			explosionArr: [],
-			waveWork: new WaveWork(waveData),
-			config: {
-				drawHeight: 8,
-				playerSpeed: 100,
-				playerRotationSpeed: 120,
-				playerBulletSpeed: 100,
-				playerBulletCount: 2,
-			},
-			progress: {
-				state: StateId.S1I,
-				stateTime: 0,
-				elapsedTime: 0,
-				limitTime: 1000 * 90,
-				mapI: 0,
-				blockI: 0,
-			},
-		};
-
-		data.player = new Player();
-		data.player.sprite.addChildTo(this.layer1);
-		data.player.collider.addChildTo(this.layer1);
-
-		data.shield = new Shield();
-		data.shield.sprite.addChildTo(this.layer1);
-		data.shield.collider.addChildTo(this.layer1);
-
-		{
-			const label = Label({
-				originX: 0.5,
-				originY: 0,
-				fontSize: 8,
-				lineHeight: 2,
-				align: 'left',
-				fill: '#ffffff',
-				stroke: '#000000',
-				strokeWidth: 4,
-			}).addChildTo(this);
-			label.text = "hoge";
-			label.x = 8;
-			label.y = 16;
-			this.debugLabel = label;
-			this.debugLabel.visible = false;
-		}
-		{
-			const label = Label({
-				originX: 0.5,
-				originY: 0,
-				fontSize: 8,
-				lineHeight: 2,
-				align: 'left',
-				fill: '#ffffff',
-				stroke: '#000000',
-				strokeWidth: 4,
-			}).addChildTo(this);
-			label.x = 8;
-			label.y = 0;
-			this.label = label;
-		}
-		{
-			const label = Label({
-				originX: 0.5,
-				originY: 0.5,
-				fontSize: 8,
-				lineHeight: 2,
-				align: 'center',
-				fill: '#ffffff',
-				stroke: '#000000',
-				strokeWidth: 4,
-			}).addChildTo(this);
-			label.x = DF.SC_W * 0.5;
-			label.y = DF.SC_H * 0.5;
-			label.text = "hkt6";
-			this.centerLabel = label;
-		}
-		this.data = data;
-	},
-
-	createSmoke: function (pos) {
-		const sprite = CircleShape({
-			width: 32,
-			height: 32,
-			fill: '#ff0',
-			strokeWidth: 0,
-		});
-		sprite.alpha = 0.2;
-		sprite.x = pos.x;
-		sprite.y = pos.y;
-		sprite.priority = 1;
-		sprite.addChildTo(this.layer1);
-
-		let forceX = Math.randfloat(-1, 1) * 10;
-		let forceY = Math.randfloat(-1, 1) * 10;
-
-		const smoke = {
-			isActive: true,
-			sprite: sprite,
-			force: Vector2(forceX, forceY),
-			startRadius: 16,
-			endRadius: 48,
-			startAlpha: 0.5,
-			endAlpha: 0,
-			elapsedTime: 0,
-			endTime: 5000,
-		};
-		this.data.smokeArr.push(smoke);
-		return smoke;
-	},
-
-	createPlayerBullet: function (pos, rotation) {
-		const sprite = Sprite('ship_shot');
-		sprite.rotation = rotation;
-		sprite.x = pos.x;
-		sprite.y = pos.y;
-		sprite.priority = 2;
-		sprite.addChildTo(this.layer1);
-		const bullet = {
-			isActive: true,
-			sprite: sprite,
-			elapsedTime: 0,
-			endTime: 1000,
-			rotation: rotation,
-		};
-		this.data.playerBulletArr.push(bullet);
-		return bullet;
-	},
-
-	createEnemyBullet: function (pos, rotation) {
-		const sprite = Sprite('enemy_shot');
-		sprite.rotation = rotation;
-		sprite.x = pos.x;
-		sprite.y = pos.y;
-		sprite.priority = 4;
-		sprite.addChildTo(this.layer1);
-		const bullet = {
-			isActive: true,
-			sprite: sprite,
-			elapsedTime: 0,
-			endTime: 1000,
-			rotation: rotation,
-		};
-		this.data.enemyBulletArr.push(bullet);
-		return bullet;
-	},
-
-	createSpeedLine: function (pos, rotation) {
-		const sprite = Sprite('speed_line');
-		sprite.rotation = rotation;
-		sprite.x = pos.x;
-		sprite.y = pos.y;
-		sprite.priority = 2;
-		sprite.addChildTo(this.layer1);
-		const speedLine = {
-			isActive: true,
-			sprite: sprite,
-			elapsedTime: 0,
-			endTime: 1000,
-			rotation: rotation,
-		};
-		this.data.speedLineArr.push(speedLine);
-		return speedLine;
-	},
-
-	getAppInput: function () {
-		const key = this.app.keyboard;
-		const appInput = {};
-		const speed = 1;
-		const dir = phina.geom.Vector2(0, 0);
-		if (key.getKey('left')) { dir.x -= speed; }
-		if (key.getKey('right')) { dir.x += speed; }
-		if (key.getKey('down')) { dir.y += speed; }
-		if (key.getKey('up')) { dir.y -= speed; }
-		appInput.dir = dir.normalize();
-		appInput.putFire = false; // key.getKey('z');
-		appInput.hasFixShield = key.getKey('z');
-		return appInput;
+		this.myScene = new HogeScene(this as any);
+		console.log('fuga');
 	},
 
 	update: function () {
-		const appInput = this.getAppInput();
-
-		const player = this.data.player;
-		const speed1 = appInput.putSmoke ? 100 : 200;
-		const speed = speed1 * this.app.ticker.deltaTime / 1000;
-
-
-		const progress = this.data.progress;
-		switch (progress.state) {
-			case StateId.S1I:
-				this.centerLabel.text = "MISSION START";
-				progress.elapsedTime = 0;
-				player.score = 0;
-				player.railX = 1;
-				{
-					var tx = (DF.SC_W / 3) * (player.railX + 0.5);
-					player.sprite.y = DF.SC_H - 40;
-					player.sprite.x = tx;
-				}
-				progress.blockI = 0;
-				this.layer0.y = 0;
-				progress.stateTime = 0;
-				progress.state = StateId.S1;
-				break;
-			case StateId.S1:
-				if (1000 < progress.stateTime) {
-					this.centerLabel.text = "";
-					progress.state = StateId.S2;
-				}
-				break;
-			case StateId.S2:
-				// 操作.
-				{
-					if (appInput.putFire) {
-						if (player.fireInterval <= player.fireTime && this.data.playerBulletArr.length < this.data.config.playerBulletCount) {
-							player.fireTime = 0;
-							this.createPlayerBullet(player.sprite, player.rotation);
-						}
-					}
-				}
-				player.fireTime += this.app.ticker.deltaTime;
-
-				{
-					var safeArea = new Rect(0, 0, DF.SC_W, DF.SC_H);
-					player.isInSafeArea = Collision.testRectRect(safeArea, player.sprite);
-				}
-
-				const vec = new Vector2(appInput.dir.x, appInput.dir.y);
-				vec.mul(this.data.config.playerSpeed * this.app.ticker.deltaTime / 1000.0);
-				player.sprite.x += vec.x;
-				player.sprite.y += vec.y;
-				player.sprite.x = MathHelper.clamp(player.sprite.x, safeArea.left, safeArea.right);
-				player.sprite.y = MathHelper.clamp(player.sprite.y, safeArea.top, safeArea.bottom);
-				player.collider.x = player.sprite.x;
-				player.collider.y = player.sprite.y;
-
-				const shield = this.data.shield;
-				const shieldVec = new Vector2();
-				if (!Vector2Helper.isZero(appInput.dir) && !appInput.hasFixShield) {
-					shield.rotation = new Vector2(-appInput.dir.x, -appInput.dir.y).toDegree();
-				}
-				shieldVec.fromDegree(shield.rotation, 32);
-				shield.sprite.x = player.sprite.x + shieldVec.x;
-				shield.sprite.y = player.sprite.y + shieldVec.y;
-				shield.sprite.rotation = shield.rotation;
-				shield.collider.x = shield.sprite.x;
-				shield.collider.y = shield.sprite.y;
-				shield.collider.rotation = shield.sprite.rotation;
-
-				progress.elapsedTime = Math.min(progress.elapsedTime + this.app.ticker.deltaTime, progress.limitTime);
-				const t = progress.elapsedTime / progress.limitTime;
-				if (1 <= t) {
-					progress.state = StateId.S3I;
-				}
-				if (!player.isInSafeArea) {
-					progress.state = StateId.S3I;
-				}
-				if (this.app.keyboard.getKeyDown('r')) {
-					progress.state = StateId.EXIT;
-				}
-				if (this.app.keyboard.getKeyDown('t')) {
-					progress.elapsedTime = progress.limitTime - 2000;
-				}
-				if (this.app.keyboard.getKeyDown('e')) {
-					const moveData = moveDataDict['circle'];
-					EnemyHelper.createEnemy(this, new Vector2(DF.SC_W * 0.5, DF.SC_H * 0.5), moveData);
-				}
-
-				WaveWorkHelper.update(this, this.data.waveWork);
-
-				this.data.playerBulletArr.forEach((_item) => BulletHelper.update(this, _item));
-				this.data.enemyBulletArr.forEach((_item) => BulletHelper.update(this, _item));
-
-
-				{
-					var safeArea = new Rect(0, 0, DF.SC_W, DF.SC_H);
-					this.data.playerBulletArr.forEach((_item) => {
-						if (Collision.testRectRect(safeArea, _item.sprite)) return;
-						_item.isActive = false;
-					});
-					this.data.enemyBulletArr.forEach((_item) => {
-						if (Collision.testRectRect(safeArea, _item.sprite)) return;
-						_item.isActive = false;
-					});
-				}
-
-				this.data.speedLineArr.forEach((_item) => SpeedLineHelper.update(this, _item));
-				this.data.enemyArr.forEach((_item) => EnemyHelper.update(this, _item));
-				this.data.explosionArr.forEach((_item) => ExplosionHelper.update(this, _item));
-
-				{
-					// player x bullet
-					const enemyBulletArr = this.data.enemyBulletArr;
-					for (let i1 = 0; i1 < enemyBulletArr.length; i1++) {
-						const bullet = enemyBulletArr[i1];
-						if (!player.collider.hitTestElement(bullet.sprite)) continue;
-						bullet.isActive = false;
-						ExplosionHelper.createExplosion(this, player.sprite);
-						progress.state = StateId.S3I;
-					}
-				}
-
-				{
-					// player x enemy
-					const enemyArr = this.data.enemyArr;
-					for (let i1 = 0; i1 < enemyArr.length; i1++) {
-						const enemy = enemyArr[i1];
-						if (!player.collider.hitTestElement(enemy.sprite)) continue;
-						enemy.isActive = false;
-						ExplosionHelper.createExplosion(this, player.sprite);
-						progress.state = StateId.S3I;
-					}
-				}
-
-				{
-					// shield x enemyBullet
-					const enemyBulletArr = this.data.enemyBulletArr;
-					for (let i1 = 0; i1 < enemyBulletArr.length; i1++) {
-						const bullet = enemyBulletArr[i1];
-						if (!shield.sprite.hitTestElement(bullet.sprite)) continue;
-						this.createPlayerBullet(bullet.sprite, shield.rotation);
-						bullet.isActive = false;
-						player.score += 20;
-					}
-				}
-
-				{
-					// playerBullet x enemy
-					const playerBulletArr = this.data.playerBulletArr;
-					const enemyArr = this.data.enemyArr;
-					for (let i1 = 0; i1 < playerBulletArr.length; i1++) {
-						const bullet = playerBulletArr[i1];
-						for (let i2 = 0; i2 < enemyArr.length; i2++) {
-							const enemy = enemyArr[i2];
-							if (!enemy.sprite.hitTestElement(bullet.sprite)) continue;
-							enemy.isActive = false;
-							bullet.isActive = false;
-							ExplosionHelper.createExplosion(this, enemy.sprite);
-							player.score += 1000;
-						}
-					}
-				}
-
-				ObjectArrayHelper.removeInactive(this.data.playerBulletArr);
-				ObjectArrayHelper.removeInactive(this.data.enemyBulletArr);
-				ObjectArrayHelper.removeInactive(this.data.speedLineArr);
-				ObjectArrayHelper.removeInactive(this.data.enemyArr);
-				ObjectArrayHelper.removeInactive(this.data.explosionArr);
-
-				break;
-			case StateId.S3I:
-				progress.state = StateId.S3;
-				this.centerLabel.text = "GAME OVER\nPRESS Z KEY";
-				progress.stateTime = 0;
-				break;
-			case StateId.S3:
-				if (1000 <= progress.stateTime && this.app.keyboard.getKeyDown('z')) {
-					progress.state = StateId.EXIT;
-				}
-				break;
-			case StateId.EXIT:
-				this.exit();
-				return;
-				break;
-		}
-		progress.stateTime += this.app.ticker.deltaTime;
-
-		player.sprite.rotation = player.rotation;
-
-		this.debugLabel.text = `XY(${player.sprite.x.toFixed(1)}, ${player.sprite.y.toFixed(1)})` +
-			` SAFE ${player.isInSafeArea}`;
-		this.label.text = "";
-
-		const restTime = Math.max(0, progress.limitTime - progress.elapsedTime);
-		// const height = restTime / 1000;
-		// let fuga = progress.elapsedTime / progress.limitTime;
-		// fuga *= fuga;
-		// // let scale = 1.0 + MathHelper.clamp(10 * progress.elapsedTime / progress.limitTime, 0.0, 10.0);
-		// let scale = (100 / Math.max(1, (100 * (1, restTime / progress.limitTime))));
-		// scale = MathHelper.clamp(scale, 0, 100);
-
-		this.label.text +=
-			'TIME ' + (restTime / 1000).toFixed(2) +
-			' SCORE ' + Math.floor(player.score) +
-			'';
-
-		// sort
-		this.layer1.children.sort((a, b) => {
-			return a.priority - b.priority;
-		});
-	},
+		var scene = this.myScene as HogeScene;
+	}
 });
 
 // メイン処理
@@ -1001,7 +585,6 @@ phina.main(function () {
 		fps: 60,
 		width: DF.SC_W,
 		height: DF.SC_H,
-		assets: ASSETS,
 		scenes: [
 			{
 				className: 'MainScene',
@@ -1014,4 +597,3 @@ phina.main(function () {
 	// アプリケーション実行
 	app.run();
 });
-
